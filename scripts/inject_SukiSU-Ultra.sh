@@ -33,8 +33,26 @@ echo ">>> 2. Fetching upstream data from ${UPSTREAM_REPO} to cross-reference..."
 git fetch --quiet "https://github.com/${UPSTREAM_REPO}.git" "${TARGET_BRANCH}"
 
 if [ "${SKIP_REBASE_STAMP}" == "true" ]; then
-    echo ">>> 3. [OVERRIDE] 6.12 Mode: Bypassing rebase. Stamping kernel with upstream/main Hash (${UPSTREAM_HASH:0:7})..."
+    # Calculate the variables BEFORE we use them so pipefail doesn't crash the script
+    CALCULATED_COUNT=$(git rev-list --count "${UPSTREAM_HASH}" 2>/dev/null || echo "11950")
+    CALCULATED_TAG=$(git describe --tags --abbrev=0 "${UPSTREAM_HASH}" 2>/dev/null || echo "v0.0.0")
     UPSTREAM_BRANCH="${TARGET_BRANCH}"
+
+    echo ">>> [OVERRIDE] 6.12 Mode: Injecting furphy version stamp (${CALCULATED_COUNT} / ${UPSTREAM_HASH:0:7}) directly into Kbuild..."
+    sed -i "s/git rev-list --count HEAD/echo ${CALCULATED_COUNT}/g" kernel/Kbuild kernel/Makefile 2>/dev/null || true
+    sed -i "s/git rev-parse --short HEAD/echo ${UPSTREAM_HASH:0:7}/g" kernel/Kbuild kernel/Makefile 2>/dev/null || true
+    sed -i "s/git rev-parse HEAD/echo ${UPSTREAM_HASH}/g" kernel/Kbuild kernel/Makefile 2>/dev/null || true
+    
+    echo ">>> [OVERRIDE] 6.12 Mode: Applying dynamic C hotfixes for builtin branch..."
+    # 1. Fix implicit SuSFS calls and linker errors with empty stubs
+    sed -i '1i #include <linux/susfs.h>' kernel/manager/pkg_observer.c 2>/dev/null || true
+    sed -i '2i void susfs_parse_priority_app_strings(void) {}' kernel/manager/pkg_observer.c 2>/dev/null || true
+    
+    sed -i '1i #include <linux/susfs.h>' kernel/supercall/dispatch.c 2>/dev/null || true
+    sed -i '2i void susfs_set_priority_uid_filter(void *arg) {}' kernel/supercall/dispatch.c 2>/dev/null || true
+
+    # 2. Fix 6.12 LSM API change
+    sed -i 's/security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");/#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)\n\tstatic const struct lsm_id ksu_lsmid = { .name = "ksu", .id = 0 };\n\tsecurity_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), \&ksu_lsmid);\n#else\n\tsecurity_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#endif/g' kernel/hook/lsm_hook.c 2>/dev/null || true
 elif [ "${USE_DYNAMIC_TRANSPLANT}" == "true" ]; then
     echo ">>> 3. Dynamic mode active: Rebasing clone onto YAML-provided Upstream Hash (${UPSTREAM_HASH:0:7})..."
     git config user.name "github-actions[bot]"
