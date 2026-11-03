@@ -6,9 +6,16 @@ echo ">>> Executing Integration Module for SukiSU-Ultra..."
 # Override channel routing so both 'stable' and 'dynamic' runs pull the custom
 # SuSFS pt_regs commits from the shoey63 fork (while leaving 'main' untouched).
 if [ "${BUILD_CHANNEL}" != "main" ]; then
-    echo ">>> [OVERRIDE] Routing SukiSU-Ultra base clone to shoey63/SukiSU-Ultra (stable)..."
-    KSU_VARIANT_REPO_URL="https://github.com/shoey63/SukiSU-Ultra.git"
-    KSU_VARIANT_REF="rebase"
+    if [ "${BASE_VER}" = "6.12" ]; then
+        echo ">>> [OVERRIDE] Kernel 6.12 detected. Routing to pure builtin branch..."
+        KSU_VARIANT_REPO_URL="https://github.com/SukiSU-Ultra/SukiSU-Ultra.git"
+        KSU_VARIANT_REF="builtin"
+        SKIP_REBASE_STAMP="true"
+    else
+        echo ">>> [OVERRIDE] Legacy kernel detected. Routing to hardened pt_regs branch (stable)..."
+        KSU_VARIANT_REPO_URL="https://github.com/shoey63/SukiSU-Ultra.git"
+        KSU_VARIANT_REF="stable"
+    fi
 fi
 
 echo ">>> 1. Cloning target branch (${KSU_VARIANT_REF}) from ${KSU_VARIANT_REPO_URL}..."
@@ -25,7 +32,10 @@ cd "${MANAGER_DIR}"
 echo ">>> 2. Fetching upstream data from ${UPSTREAM_REPO} to cross-reference..."
 git fetch --quiet "https://github.com/${UPSTREAM_REPO}.git" "${TARGET_BRANCH}"
 
-if [ "${USE_DYNAMIC_TRANSPLANT}" == "true" ]; then
+if [ "${SKIP_REBASE_STAMP}" == "true" ]; then
+    echo ">>> 3. [OVERRIDE] 6.12 Mode: Bypassing rebase. Stamping kernel with upstream/main Hash (${UPSTREAM_HASH:0:7})..."
+    UPSTREAM_BRANCH="${TARGET_BRANCH}"
+elif [ "${USE_DYNAMIC_TRANSPLANT}" == "true" ]; then
     echo ">>> 3. Dynamic mode active: Rebasing clone onto YAML-provided Upstream Hash (${UPSTREAM_HASH:0:7})..."
     git config user.name "github-actions[bot]"
     git config user.email "github-actions[bot]@users.noreply.github.com"
