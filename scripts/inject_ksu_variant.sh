@@ -51,8 +51,11 @@ fi
 # (These variables were populated by the sourced variant script)
 SHORT_HASH=${UPSTREAM_HASH:0:7}
 
-echo ">>> Injecting Sandbox Variables into Kbuild..."
+echo ">>> Injecting Sandbox Variables into Kbuild/Makefile..."
 TARGET_KBUILD="${MANAGER_DIR}/kernel/Kbuild"
+if [ ! -f "$TARGET_KBUILD" ]; then
+    TARGET_KBUILD="${MANAGER_DIR}/kernel/Makefile"
+fi
 
 if [ -f "$TARGET_KBUILD" ]; then
     {
