@@ -7,9 +7,9 @@ echo ">>> Executing Integration Module for SukiSU-Ultra..."
 # SuSFS pt_regs commits from the shoey63 fork (while leaving 'main' untouched).
 if [ "${BUILD_CHANNEL}" != "main" ]; then
     if [ "${BASE_VER}" = "6.12" ]; then
-        echo ">>> [OVERRIDE] Kernel 6.12 detected. Routing to pure builtin branch..."
+        echo ">>> [OVERRIDE] Kernel 6.12 detected. Routing to pure builtin-new branch..."
         KSU_VARIANT_REPO_URL="https://github.com/SukiSU-Ultra/SukiSU-Ultra.git"
-        KSU_VARIANT_REF="builtin"
+        KSU_VARIANT_REF="builtin-new"
         SKIP_REBASE_STAMP="true"
     else
         echo ">>> [OVERRIDE] Legacy kernel detected. Routing to hardened pt_regs branch (stable)..."
@@ -33,26 +33,18 @@ echo ">>> 2. Fetching upstream data from ${UPSTREAM_REPO} to cross-reference..."
 git fetch --quiet "https://github.com/${UPSTREAM_REPO}.git" "${TARGET_BRANCH}"
 
 if [ "${SKIP_REBASE_STAMP}" == "true" ]; then
-    # Calculate the variables BEFORE we use them so pipefail doesn't crash the script
-    CALCULATED_COUNT=$(git rev-list --count "${UPSTREAM_HASH}" 2>/dev/null || echo "11950")
-    CALCULATED_TAG=$(git describe --tags --abbrev=0 "${UPSTREAM_HASH}" 2>/dev/null || echo "v0.0.0")
+    echo ">>> 3. [OVERRIDE] 6.12 Mode: Bypassing rebase and applying dynamic C hotfixes..."
     UPSTREAM_BRANCH="${TARGET_BRANCH}"
-
-    echo ">>> [OVERRIDE] 6.12 Mode: Injecting furphy version stamp (${CALCULATED_COUNT} / ${UPSTREAM_HASH:0:7}) directly into Kbuild..."
-    sed -i "s/git rev-list --count HEAD/echo ${CALCULATED_COUNT}/g" kernel/Kbuild kernel/Makefile 2>/dev/null || true
-    sed -i "s/git rev-parse --short HEAD/echo ${UPSTREAM_HASH:0:7}/g" kernel/Kbuild kernel/Makefile 2>/dev/null || true
-    sed -i "s/git rev-parse HEAD/echo ${UPSTREAM_HASH}/g" kernel/Kbuild kernel/Makefile 2>/dev/null || true
     
-    echo ">>> [OVERRIDE] 6.12 Mode: Applying dynamic C hotfixes for builtin branch..."
     # 1. Fix implicit SuSFS calls and linker errors with empty stubs
     sed -i '1i #include <linux/susfs.h>' kernel/manager/pkg_observer.c 2>/dev/null || true
     sed -i '2i void susfs_parse_priority_app_strings(void) {}' kernel/manager/pkg_observer.c 2>/dev/null || true
-    
     sed -i '1i #include <linux/susfs.h>' kernel/supercall/dispatch.c 2>/dev/null || true
     sed -i '2i void susfs_set_priority_uid_filter(void *arg) {}' kernel/supercall/dispatch.c 2>/dev/null || true
 
     # 2. Fix 6.12 LSM API change
     sed -i 's/security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");/#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)\n\tstatic const struct lsm_id ksu_lsmid = { .name = "ksu", .id = 0 };\n\tsecurity_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), \&ksu_lsmid);\n#else\n\tsecurity_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#endif/g' kernel/hook/lsm_hook.c 2>/dev/null || true
+
 elif [ "${USE_DYNAMIC_TRANSPLANT}" == "true" ]; then
     echo ">>> 3. Dynamic mode active: Rebasing clone onto YAML-provided Upstream Hash (${UPSTREAM_HASH:0:7})..."
     git config user.name "github-actions[bot]"
@@ -69,12 +61,8 @@ elif [ "${USE_DYNAMIC_TRANSPLANT}" == "true" ]; then
     fi
 else
     echo ">>> 3. Stable mode active: Calculating exact upstream anchor commit via merge-base..."
-    
-    # Mathematically finds the divergence point, bypassing any custom emergency commits
     UPSTREAM_HASH=$(git merge-base HEAD FETCH_HEAD)
     echo "  -> Found mathematically true upstream anchor: ${UPSTREAM_HASH:0:7}"
-    
-    # Export it so fetch_manager.sh can use it in the exact-match API hunt later
     echo "UPSTREAM_HASH=$UPSTREAM_HASH" >> $GITHUB_ENV
     UPSTREAM_BRANCH="${KSU_VARIANT_REF}"
 fi
@@ -82,6 +70,14 @@ fi
 # 4. Calculate the official counts EXACTLY from the rock-solid hash
 CALCULATED_COUNT=$(git rev-list --count "${UPSTREAM_HASH}" 2>/dev/null || echo "11950")
 CALCULATED_TAG=$(git describe --tags --abbrev=0 "${UPSTREAM_HASH}" 2>/dev/null || echo "v0.0.0")
+
+# 5. [OVERRIDE] 6.12 Version Spoofing (Must run AFTER calculations)
+if [ "${SKIP_REBASE_STAMP}" == "true" ]; then
+    echo ">>> [OVERRIDE] 6.12 Mode: Injecting furphy version stamp (${CALCULATED_COUNT} / ${UPSTREAM_HASH:0:7}) directly into Kbuild/Makefile..."
+    sed -i "s/git rev-list --count HEAD/echo ${CALCULATED_COUNT}/g" kernel/Kbuild kernel/Makefile 2>/dev/null || true
+    sed -i "s/git rev-parse --short HEAD/echo ${UPSTREAM_HASH:0:7}/g" kernel/Kbuild kernel/Makefile 2>/dev/null || true
+    sed -i "s/git rev-parse HEAD/echo ${UPSTREAM_HASH}/g" kernel/Kbuild kernel/Makefile 2>/dev/null || true
+fi
 
 cd ..
 
